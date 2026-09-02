@@ -3,7 +3,7 @@ import numpy as np
 from agents.agent_1_frame_selector.agent import FrameSelectorAgent
 
 def test_real_video():
-    video_path = "data/raw/laptop_sample.mp4"
+    video_path = "tv_sample.mp4"
     output_image_path = "data/candidate_output.jpg"
 
     print(f"[INFO] Initializing Agent 1 on {video_path}...")
