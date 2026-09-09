@@ -1,48 +1,189 @@
-import cv2
-import numpy as np
+import json
+import time
+
 from agents.agent_1_frame_selector.agent import FrameSelectorAgent
 
-def test_real_video():
-    video_path = "tv_sample.mp4"
-    output_image_path = "data/candidate_output.jpg"
 
-    print(f"[INFO] Initializing Agent 1 on {video_path}...")
-    agent = FrameSelectorAgent(yolo_model_path="yolov8n-seg.pt", blur_threshold=15.0)
+VIDEO_PATH = r"D:\GP\agent2\input\video.mp4"
+MODEL_PATH = "yolov8n-seg.pt"
 
-    # Process video every 5 frames
-    result = agent.extract_candidate_frame(video_path, frame_interval=5)
+CONFIDENCE = 0.30
 
-    if result is None:
-        print("[FAIL] Agent 1 did not find any clear frame with a target surface.")
-        return
+# Speed optimization
+DETECTION_INTERVAL = 5
+IMAGE_SIZE = 512
 
-    print("\n=== AGENT 1 EXTRACTION SUCCESS ===")
-    print(f"Selected Frame ID : {result.frame_id}")
-    print(f"Timestamp        : {result.timestamp_sec} seconds")
-    print(f"Clarity Score    : {result.blur_score}")
-    print(f"Target Surface   : {result.roi.surface_type} (Conf: {result.roi.confidence})")
-    print(f"Polygon Points   : {result.roi.polygon_points}")
 
-    # Draw ROI onto the frame to visually verify detection
-    cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, result.frame_id)
-    ret, frame = cap.read()
-    cap.release()
+def main():
 
-    if ret and frame is not None:
-        pts = np.array(result.roi.polygon_points, np.int32).reshape((-1, 1, 2))
-        cv2.polylines(frame, [pts], isClosed=True, color=(0, 255, 0), thickness=3)
-        cv2.putText(
-            frame,
-            f"{result.roi.surface_type} ({result.roi.confidence})",
-            (result.roi.polygon_points[0][0], max(20, result.roi.polygon_points[0][1] - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 0),
-            2
+    print("==========================================")
+    print("AGENT 1: OBJECT DISCOVERY + TRACKING")
+    print("==========================================")
+
+    agent = FrameSelectorAgent(
+        model_path=MODEL_PATH,
+
+        detection_confidence=CONFIDENCE,
+
+        target_class_ids=None,
+
+        blur_threshold=15.0,
+
+        detection_interval=DETECTION_INTERVAL,
+
+        imgsz=IMAGE_SIZE,
+
+        blur_resize_width=640,
+    )
+
+    print(f"Video: {VIDEO_PATH}")
+    print(f"Model: {MODEL_PATH}")
+    print(f"Confidence: {CONFIDENCE}")
+    print("Target classes: ALL YOLO classes")
+    print(
+        f"YOLO interval: "
+        f"every {DETECTION_INTERVAL} frame(s)"
+    )
+    print(
+        f"YOLO image size: "
+        f"{IMAGE_SIZE}"
+    )
+
+    print("\nStarting Agent 1...\n")
+
+    start = time.perf_counter()
+
+    result = agent.process_video(
+        VIDEO_PATH
+    )
+
+    elapsed = time.perf_counter() - start
+
+    # ---------------------------------------------------------
+    # Final result
+    # ---------------------------------------------------------
+
+    print("\n==========================================")
+    print("FINAL AGENT 1 RESULT")
+    print("==========================================")
+
+    print(
+        f"Total unique objects: "
+        f"{result.total_surfaces}"
+    )
+
+    for item in result.detected_surfaces:
+
+        print("\n------------------------------------------")
+
+        print(
+            f"Object: "
+            f"{item.roi.surface_type}"
         )
-        cv2.imwrite(output_image_path, frame)
-        print(f"[SUCCESS] Visual verification image saved to: {output_image_path}")
+
+        print(
+            f"Track ID: "
+            f"{item.object_id}"
+        )
+
+        print(
+            f"Confidence: "
+            f"{item.roi.confidence:.3f}"
+        )
+
+        print(
+            f"First detected frame: "
+            f"{item.first_seen_frame}"
+        )
+
+        print(
+            f"First detected time: "
+            f"{item.first_seen_timestamp_sec:.2f}s"
+        )
+
+        print(
+            f"Best observation frame: "
+            f"{item.frame_id}"
+        )
+
+        print(
+            f"Best observation time: "
+            f"{item.timestamp_sec:.2f}s"
+        )
+
+        print(
+            f"Blur score: "
+            f"{item.blur_score:.2f}"
+        )
+
+        print(
+            f"Polygon points: "
+            f"{len(item.roi.polygon_points)}"
+        )
+
+        print(
+            f"Polygon: "
+            f"{item.roi.polygon_points[:5]}"
+        )
+
+    # ---------------------------------------------------------
+    # Feedback
+    # ---------------------------------------------------------
+
+    print("\n==========================================")
+    print("FEEDBACK")
+    print("==========================================")
+
+    print(result.feedback_prompt)
+
+    # ---------------------------------------------------------
+    # Performance
+    # ---------------------------------------------------------
+
+    print("\n==========================================")
+    print("TOTAL TEST TIME")
+    print("==========================================")
+
+    print(
+        f"{elapsed:.2f} seconds"
+    )
+
+    # ---------------------------------------------------------
+    # Optional JSON export
+    # ---------------------------------------------------------
+
+    output_path = (
+        "data/agent1_output.json"
+    )
+
+    json_data = result.model_dump()
+
+    try:
+
+        with open(
+            output_path,
+            "w",
+            encoding="utf-8",
+        ) as f:
+
+            json.dump(
+                json_data,
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        print(
+            f"\nJSON saved to: "
+            f"{output_path}"
+        )
+
+    except Exception as e:
+
+        print(
+            f"\nCould not save JSON: {e}"
+        )
+
 
 if __name__ == "__main__":
-    test_real_video()
+    main()
