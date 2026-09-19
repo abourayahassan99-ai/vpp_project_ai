@@ -1,0 +1,39 @@
+{
+  "frame_descriptions": [
+    {
+      "frame_number": 0,
+      "caption": "a white wall"
+    },
+    {
+      "frame_number": 206,
+      "caption": "a tv sitting on top of a table"
+    },
+    {
+      "frame_number": 413,
+      "caption": "a tv sitting on top of a table"
+    },
+    {
+      "frame_number": 620,
+      "caption": "a flat screen tv mounted on a wall"
+    }
+  ],
+  "scene_analysis": {
+    "Scene Type": "Living Room",
+    "Main Objects": [
+      "TV",
+      "Wall"
+    ],
+    "Persistent Objects": [
+      "TV"
+    ],
+    "Visible Surfaces": [
+      "White Wall",
+      "Flat Screen TV Mounting Surface"
+    ],
+    "Spatial Relationships": [
+      "TV is placed on top of a table",
+      "TV is mounted on a wall"
+    ],
+    "Scene Context": "A living room with a television set mounted on a wall."
+  }
+}

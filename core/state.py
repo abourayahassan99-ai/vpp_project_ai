@@ -67,6 +67,12 @@ class DetectedSurface(BaseModel):
         description="Detected object region"
     )
 
+    # <--- الحقل الجديد الذي يحل المشكلة --->
+    trajectory: Optional[List[Dict[str, Any]]] = Field(
+        default=[],
+        description="Full movement trajectory and polygons across all frames"
+    )
+
 
 class CandidateFrameOutput(BaseModel):
     """
