@@ -120,6 +120,7 @@ class AdPlacerAgent:
         video_path: Optional[Union[str, Path]] = None,
         background_image_path: Optional[Union[str, Path]] = None,
         render_video: bool = False,
+        user_prompt: Optional[str] = None,
     ) -> Agent3Output:
         """
         Place the ad on the best surface.
@@ -144,7 +145,7 @@ class AdPlacerAgent:
             with FrameSource(source_path) as source:
                 # 1. Target selection (Agent 1 candidates x Agent 2 scene context) --------------
                 scene_sections = self._scene_sections(agent2)
-                candidates = self.rank_surfaces(agent1, scene_sections, source.width, source.height)
+                candidates = self.rank_surfaces(agent1, scene_sections, source.width, source.height, user_prompt=user_prompt)
                 if not candidates:
                     raise PlacementError("No valid target surface found in Agent 1 output.")
                 target = candidates[0]
@@ -322,6 +323,28 @@ class AdPlacerAgent:
                 sections[re.sub(r"[\s_]+", " ", str(key).strip().lower())] = _flatten_text(value)
         return sections
 
+    @staticmethod
+    def _requested_surface_types(prompt: Optional[str]) -> List[str]:
+         """
+          Extract explicit surface targets from the user's prompt.
+
+          If the prompt does not mention a known surface,
+          return an empty list and keep the normal scoring behavior.
+          """
+
+         if not prompt:
+               return []
+
+         text = prompt.lower()
+
+         requested = []
+
+         for surface_type, synonyms in SURFACE_SYNONYMS.items():
+
+             if any(_has_word(text, term) for term in synonyms):
+                 requested.append(surface_type)
+
+         return list(dict.fromkeys(requested))
     # ------------------------------------------------------------------ #
     # 1. Target surface selection
     # ------------------------------------------------------------------ #
@@ -331,6 +354,7 @@ class AdPlacerAgent:
         scene_sections: Dict[str, str],
         frame_w: int,
         frame_h: int,
+        user_prompt: Optional[str] = None,
     ) -> List[SurfaceCandidate]:
         """Validate every detected surface and return the usable ones, best first."""
         frame_area = float(frame_w * frame_h)
@@ -339,6 +363,7 @@ class AdPlacerAgent:
         persistent_text = scene_sections.get("persistent objects", "")
 
         candidates: List[SurfaceCandidate] = []
+        requested_types = self._requested_surface_types(user_prompt)
         for idx, surf in enumerate(agent1.get("detected_surfaces") or []):
             if not isinstance(surf, dict):
                 continue
@@ -346,6 +371,16 @@ class AdPlacerAgent:
             object_id = surf.get("object_id", idx)
             confidence = self._to_float(roi.get("confidence", surf.get("confidence")), 0.0)
             surface_type = str(roi.get("surface_type", "unknown")).strip().lower()
+            if requested_types:
+                  matches_requested = any(
+                    surface_type == requested
+                    or surface_type in SURFACE_SYNONYMS.get(requested, ())
+                    or requested in SURFACE_SYNONYMS.get(surface_type, ())
+                    for requested in requested_types
+                  )
+
+                  if not matches_requested:
+                    continue 
 
             if confidence < self.cfg.min_confidence:
                 logger.info("Skip %s: confidence %.2f < %.2f", object_id, confidence, self.cfg.min_confidence)
