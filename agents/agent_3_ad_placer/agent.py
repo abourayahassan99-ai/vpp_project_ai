@@ -121,56 +121,140 @@ class AdPlacerAgent:
         background_image_path: Optional[Union[str, Path]] = None,
         render_video: bool = False,
         user_prompt: Optional[str] = None,
+        agent1_output_path: Optional[Union[str, Path]] = None,
+        agent2_output_path: Optional[Union[str, Path]] = None,
     ) -> Agent3Output:
         """
         Place the ad on the best surface.
 
-        ``video_path`` supplies the frames referenced by Agent 1 (``frame_id``). For tests or
-        single-image pipelines, ``background_image_path`` can be used instead.
-        Expected failures never raise: they come back as ``blending_status.success == False``.
+        `video_path` supplies the frames referenced by
+        the Agent 1 output. The same frame source is used
+        for single-image pipelines, background images, and
+        video rendering.
+        Expected failures never raise: they come back in
+        the returned Agent3Output.
         """
         surface_id: Optional[Union[int, str]] = None
         frame_id: Optional[int] = None
         metrics: Dict[str, Any] = {}
+
         try:
             source_path = video_path or background_image_path
-            if source_path is None:
-                raise PlacementError("Provide either video_path or background_image_path.")
 
-            # Inputs: Agent 1 (required) and Agent 2 (optional but strongly recommended) ---------
-            agent1 = self._load_json(self.cfg.agent1_output_path, required=True)
-            agent2 = self._load_json(self.cfg.agent2_output_path, required=False)
-            ad_bgr, ad_alpha = self._load_ad(ad_image_path)
+            if source_path is None:
+                raise PlacementError(
+                    "Provide either video_path or background_image_path."
+                )
+
+            # Inputs: Agent 1 and Agent 2
+            # Use per-job paths when provided, otherwise fall back to config defaults.
+
+            agent1_path = (
+                Path(agent1_output_path)
+                if agent1_output_path is not None
+                else self.cfg.agent1_output_path
+            )
+
+            agent2_path = (
+                Path(agent2_output_path)
+                if agent2_output_path is not None
+                else self.cfg.agent2_output_path
+            )
+
+            agent1 = self._load_json(
+                agent1_path,
+                required=True
+            )
+
+            agent2 = self._load_json(
+                agent2_path,
+                required=False
+            )
+
+            ad_bgr, ad_alpha = self._load_ad(
+                ad_image_path
+            )
 
             with FrameSource(source_path) as source:
-                # 1. Target selection (Agent 1 candidates x Agent 2 scene context) --------------
+                # 1. Target selection (Agent 1 candidates x Agent 2 scene context)
                 scene_sections = self._scene_sections(agent2)
-                candidates = self.rank_surfaces(agent1, scene_sections, source.width, source.height, user_prompt=user_prompt)
+
+                candidates = self.rank_surfaces(
+                    agent1,
+                    scene_sections,
+                    source.width,
+                    source.height,
+                    user_prompt=user_prompt
+                )
+
                 if not candidates:
-                    raise PlacementError("No valid target surface found in Agent 1 output.")
+                    raise PlacementError(
+                        "No valid target surface found in Agent 1 output."
+                    )
+
                 target = candidates[0]
-                surface_id, frame_id = target.object_id, target.frame_id
+
+                surface_id = target.object_id
+                frame_id = target.frame_id
+
                 metrics.update(
                     surface_type=target.surface_type,
-                    detection_confidence=round(target.confidence, 4),
-                    selection_score=round(target.score, 4),
-                    score_breakdown={k: round(v, 4) for k, v in target.score_breakdown.items()},
+                    detection_confidence=round(
+                        target.confidence,
+                        4
+                    ),
+                    selection_score=round(
+                        target.score,
+                        4
+                    ),
+                    score_breakdown={
+                        k: round(v, 4)
+                        for k, v in target.score_breakdown.items()
+                    },
                     polygon_fit_method=target.fit_method,
                     target_corners=target.quad.round(2).tolist(),
                     num_candidates=len(candidates),
                 )
 
-                frame = source.read(target.frame_id, target.timestamp_sec)
+                frame = source.read(
+                    target.frame_id,
+                    target.timestamp_sec
+                )
+
                 if frame is None:
                     raise PlacementError(
-                        f"Could not read frame {target.frame_id} (t={target.timestamp_sec}) from {source.path}."
+                        f"Could not read frame {target.frame_id} "
+                        f"(t={target.timestamp_sec})."
                     )
 
-                # 2-4. Geometry -> lighting -> blending -----------------------------------------
-                prepared, dest_size = prepare_ad(ad_bgr, ad_alpha, target.quad, self.cfg.fit_mode)
-                lighting = estimate_lighting(frame, prepared, target.quad, target.surface_type, self.cfg)
-                prepared.bgr = apply_lighting(prepared.bgr, lighting)
-                composite_img, info = composite(frame, prepared, target.quad, self.cfg.blend_mode, self.cfg)
+                # 2-4. Geometry -> lighting -> blending
+                prepared, dest_size = prepare_ad(
+                    ad_bgr,
+                    ad_alpha,
+                    target.quad,
+                    self.cfg.fit_mode
+                )
+
+                lighting = estimate_lighting(
+                    frame,
+                    prepared,
+                    target.quad,
+                    target.surface_type,
+                    self.cfg
+                )
+
+                prepared.bgr = apply_lighting(
+                    prepared.bgr,
+                    lighting
+                )
+
+                composite_img, info = composite(
+                    frame,
+                    prepared,
+                    target.quad,
+                    self.cfg.blend_mode,
+                    self.cfg
+                )
 
                 metrics.update(
                     transformation_matrix=info["transformation_matrix"],
@@ -180,40 +264,92 @@ class AdPlacerAgent:
                     blending=info["blending"],
                 )
 
-                # 5. Save key frame ---------------------------------------------------------------
-                out_path = Path(self.cfg.output_image_path)
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                params = [int(cv2.IMWRITE_JPEG_QUALITY), int(self.cfg.jpeg_quality)]
-                if not cv2.imwrite(str(out_path), composite_img, params):
-                    raise PlacementError(f"Failed to write output image to {out_path}")
+                # 5. Save key frame
+                out_path = Path(
+                    self.cfg.output_image_path
+                )
+
+                out_path.parent.mkdir(
+                    parents=True,
+                    exist_ok=True
+                )
+
+                params = [
+                    int(cv2.IMWRITE_JPEG_QUALITY),
+                    int(self.cfg.jpeg_quality)
+                ]
+
+                if not cv2.imwrite(
+                    str(out_path),
+                    composite_img,
+                    params
+                ):
+                    raise PlacementError(
+                        f"Failed to write output image to {out_path}"
+                    )
 
                 message = "Ad placed successfully."
+
                 if info["blending"].get("note"):
                     message += " " + info["blending"]["note"]
 
-                # Optional video ------------------------------------------------------------------
+                # Optional video
                 video_path_out: Optional[str] = None
+
                 if render_video:
-                    video_path_out, video_info = self._safe_render_video(source, target, prepared, agent1)
+                    video_path_out, video_info = (
+                        self._safe_render_video(
+                            source,
+                            target,
+                            prepared,
+                            agent1
+                        )
+                    )
+
                     metrics["video"] = video_info
+
                     if video_path_out is None:
-                        message += f" Video not rendered: {video_info.get('error')}"
+                        message += (
+                            f" Video not rendered: "
+                            f"{video_info.get('error')}"
+                        )
 
             return Agent3Output(
                 selected_surface_id=surface_id,
                 selected_frame_id=frame_id,
-                blending_status=BlendingStatus(success=True, message=message),
+                blending_status=BlendingStatus(
+                    success=True,
+                    message=message
+                ),
                 output_image_path=str(out_path),
                 output_video_path=video_path_out,
                 placement_metrics=metrics,
             )
-        except PlacementError as exc:
-            logger.warning("Agent 3 could not complete placement: %s", exc)
-            return self._failure(str(exc), surface_id, frame_id, metrics)
-        except Exception as exc:  # noqa: BLE001 - agents must not crash the pipeline
-            logger.exception("Agent 3 unexpected error")
-            return self._failure(f"Unexpected error: {type(exc).__name__}: {exc}", surface_id, frame_id, metrics)
 
+        except PlacementError as exc:
+            logger.warning(
+                "Agent 3 could not complete placement: %s",
+                exc
+            )
+
+            return self._failure(
+                str(exc),
+                surface_id,
+                frame_id,
+                metrics
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Agent 3 unexpected error"
+            )
+
+            return self._failure(
+                f"Unexpected error: {type(exc).__name__}: {exc}",
+                surface_id,
+                frame_id,
+                metrics
+            )
     # ------------------------------------------------------------------ #
     # Loading
     # ------------------------------------------------------------------ #

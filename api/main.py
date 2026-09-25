@@ -1,12 +1,14 @@
 from pathlib import Path
+import json
 import shutil
 import uuid
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse
 
+from agents.agent_1_frame_selector.agent import FrameSelectorAgent
+from agents.agent_2_context_analyzer.agent import ContextAnalyzerAgent
 from agents.agent_3_ad_placer.agent import AdPlacerAgent
-
 
 # ============================================================
 # APP
@@ -81,7 +83,47 @@ async def process_video(
         shutil.copyfileobj(advertisement.file, buffer)
 
     # --------------------------------------------------------
-    # 4. Run Agent 3
+    # 4. Run Agent 1
+    # --------------------------------------------------------
+
+    agent1 = FrameSelectorAgent()
+
+    agent1_result = agent1.process_video(
+        str(video_path)
+    )
+    # --------------------------------------------------------
+    # 5. Run Agent 2
+    # --------------------------------------------------------
+
+    agent2 = ContextAnalyzerAgent()
+
+    agent2_result = agent2.analyze_video(
+        str(video_path)
+    )
+     # --------------------------------------------------------
+    # 6. Save Agent 1 and Agent 2 outputs
+    # --------------------------------------------------------
+
+    agent1_output_path = OUTPUTS_DIR / f"{job_id}_agent1.json"
+    agent2_output_path = OUTPUTS_DIR / f"{job_id}_agent2.json"
+
+    with open(agent1_output_path, "w", encoding="utf-8") as f:
+        json.dump(
+            agent1_result.model_dump(),
+            f,
+            indent=4,
+            ensure_ascii=False
+        )
+
+    with open(agent2_output_path, "w", encoding="utf-8") as f:
+        json.dump(
+            agent2_result,
+            f,
+            indent=4,
+            ensure_ascii=False
+        )
+    # --------------------------------------------------------
+    # 7. Run Agent 3
     # --------------------------------------------------------
 
     agent3 = AdPlacerAgent()
@@ -90,11 +132,13 @@ async def process_video(
         ad_image_path=advertisement_path,
         video_path=video_path,
         render_video=True,
-        user_prompt=prompt
+        user_prompt=prompt,
+        agent1_output_path=agent1_output_path,
+        agent2_output_path=agent2_output_path
     )
 
     # --------------------------------------------------------
-    # 5. Check result
+    # 8. Check result
     # --------------------------------------------------------
 
     if not result.blending_status.success:
@@ -108,7 +152,7 @@ async def process_video(
         }
 
     # --------------------------------------------------------
-    # 6. Copy output video to API outputs folder
+    # 9. Copy output video to API outputs folder
     # --------------------------------------------------------
 
     output_video_url = None
@@ -131,7 +175,7 @@ async def process_video(
             output_video_url = f"/outputs/{final_video_name}"
 
     # --------------------------------------------------------
-    # 7. Copy output image to API outputs folder
+    # 10. Copy output image to API outputs folder
     # --------------------------------------------------------
 
     if result.output_image_path:
@@ -151,7 +195,7 @@ async def process_video(
             output_image_url = f"/outputs/{final_image_name}"
 
     # --------------------------------------------------------
-    # 8. Return API response
+    # 11. Return API response
     # --------------------------------------------------------
 
     return {

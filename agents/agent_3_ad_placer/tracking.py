@@ -13,6 +13,8 @@ class FrameSource:
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(f"FrameSource path: {self.source_path}")
+        print(f"FrameSource total frames: {self.total_frames}")
     @property
     def is_video(self) -> bool:
         """تأكيد أن المصدر عبارة عن فيديو مفتوح ويعمل."""
