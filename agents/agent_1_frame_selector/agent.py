@@ -67,6 +67,34 @@ class FrameSelectorAgent:
 
         return self.blur_detector.calculate_blur_score(small_frame)
 
+    def _roi_blur_score(self, frame: np.ndarray, polygon) -> float:
+        """Sharpness measured on the object's own region (not the whole frame)."""
+        pts = np.asarray(polygon, dtype=np.int32)
+        x, y, w, h = cv2.boundingRect(pts)
+        h_img, w_img = frame.shape[:2]
+        x0, y0, x1, y1 = max(x, 0), max(y, 0), min(x + w, w_img), min(y + h, h_img)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return 0.0
+        return self._calculate_fast_blur_score(frame[y0:y1, x0:x1])
+
+    def _anchor_score(self, frame_shape, polygon, confidence: float, roi_blur: float) -> float:
+        """
+        How good is this frame as the *anchor* for perspective tracking?
+        confidence x sharpness x not-cropped-by-the-frame x reasonably large.
+        (Agent 3 builds its plane model from this frame, so a sharp, fully visible surface matters
+        more than the single highest detector confidence.)
+        """
+        h_img, w_img = frame_shape[:2]
+        pts = np.asarray(polygon, dtype=np.float32)
+        x, y, w, h = cv2.boundingRect(pts.astype(np.int32))
+        margin = 4
+        touches = sum([x <= margin, y <= margin, x + w >= w_img - margin, y + h >= h_img - margin])
+        visibility = 1.0 - 0.25 * touches                      # cropped by 0..4 frame borders
+        area_ratio = (w * h) / float(w_img * h_img)
+        size = min(1.0, (area_ratio / 0.03) ** 0.5)            # saturates at ~3 % of the frame
+        sharp = min(1.0, roi_blur / max(self.blur_threshold * 4.0, 1e-6))
+        return float(confidence * (0.4 + 0.6 * sharp) * visibility * (0.3 + 0.7 * size))
+
     def _detect_and_track(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         track_kwargs = {
             "persist": True,
@@ -151,7 +179,6 @@ class FrameSelectorAgent:
 
             if should_detect:
                 detections = self._detect_and_track(frame)
-                blur_score = self._calculate_fast_blur_score(frame)
                 timestamp_sec = frame_id / fps
 
                 for detection in detections:
@@ -160,14 +187,14 @@ class FrameSelectorAgent:
                     confidence = detection["confidence"]
                     polygon = detection["polygon"]
 
-                    if object_id is not None:
-                        object_key = ("track", object_id)
-                    else:
-                        object_key = (
-                            "class",
-                            detection["class_id"],
-                            object_name,
-                        )
+                    # Never merge detections that have no tracker ID: two different TVs of the
+                    # same class would silently become one object.
+                    if object_id is None:
+                        continue
+                    object_key = ("track", object_id)
+
+                    blur_score = self._roi_blur_score(frame, polygon)
+                    score = self._anchor_score(frame.shape, polygon, confidence, blur_score)
 
                     if object_key not in best_objects:
                         best_objects[object_key] = {
@@ -179,6 +206,7 @@ class FrameSelectorAgent:
                             "best_timestamp_sec": timestamp_sec,
                             "best_confidence": confidence,
                             "best_blur_score": blur_score,
+                            "best_score": score,
                             "best_polygon": polygon,
                             "trajectory": [],
                         }
@@ -192,7 +220,11 @@ class FrameSelectorAgent:
                         )
                     else:
                         current = best_objects[object_key]
-                        if confidence > current["best_confidence"]:
+                        # best anchor = best combined score; a blurred frame never replaces a sharp one
+                        sharp_ok = (blur_score >= self.blur_threshold
+                                    or current["best_blur_score"] < self.blur_threshold)
+                        if score > current["best_score"] and sharp_ok:
+                            current["best_score"] = score
                             current["best_confidence"] = confidence
                             current["best_frame_id"] = frame_id
                             current["best_timestamp_sec"] = timestamp_sec

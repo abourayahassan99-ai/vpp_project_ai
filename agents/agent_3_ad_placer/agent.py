@@ -13,7 +13,9 @@ Module map
     geometry.py   polygon validation, corner fitting/ordering, ad preparation (fit_mode), perspective warp
     lighting.py   LAB brightness / contrast / colour-temperature matching, emissive-surface handling
     blending.py   feathered alpha, Poisson clone (normal / mixed), hybrid edge-band blend
-    tracking.py   FrameSource, optical-flow + RANSAC homography tracking
+    tracking.py   FrameSource, anchored planar tracker (LK + RANSAC homography, state machine, smoothing)
+    edge_refine.py / smoothing.py / occlusion.py / surface_init.py   tracker + compositing helpers
+    video_placer.py   place_ad_in_video(): tracking -> occlusion -> per-frame compositing -> mp4
     agent.py      this file: reads Agent 1 + Agent 2, scores and selects the surface, orchestrates the rest
 
 Selection score (Agent 1 + Agent 2 combined)
@@ -47,8 +49,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import cv2
 import numpy as np
 
-from .blending import composite
-from .geometry import fit_quad, parse_polygon, polygon_is_valid, prepare_ad
+from .blending import blend, build_masks, feather_params
+from .geometry import fit_quad, parse_polygon, polygon_is_valid, prepare_ad, warp_ad
 from .lighting import apply_lighting, estimate_lighting
 from .schemas import (
     VALID_BLEND_MODES,
@@ -60,7 +62,9 @@ from .schemas import (
     PreparedAd,
     SurfaceCandidate,
 )
-from .tracking import FrameSource, track_surface
+from .surface_init import build_anchor_quad
+from .tracking import FrameSource
+from .video_placer import place_ad_in_video
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +201,28 @@ class AdPlacerAgent:
                 surface_id = target.object_id
                 frame_id = target.frame_id
 
+                frame = source.read(
+                    target.frame_id,
+                    target.timestamp_sec
+                )
+
+                if frame is None:
+                    raise PlacementError(
+                        f"Could not read frame {target.frame_id} "
+                        f"(t={target.timestamp_sec})."
+                    )
+
+                # Final anchor quad (line-fitted trapezoid + bezel->screen inset). The SAME quad is used
+                # for the key-frame image and as the plane definition for video tracking.
+                anchor_quad, anchor_method, anchor_warnings = build_anchor_quad(
+                    frame,
+                    polygon_points=target.polygon,
+                    surface_type=target.surface_type,
+                    cfg=self.cfg,
+                )
+                target.quad = anchor_quad
+                target.fit_method = anchor_method
+
                 metrics.update(
                     surface_type=target.surface_type,
                     detection_confidence=round(
@@ -213,19 +239,9 @@ class AdPlacerAgent:
                     },
                     polygon_fit_method=target.fit_method,
                     target_corners=target.quad.round(2).tolist(),
+                    anchor_warnings=anchor_warnings,
                     num_candidates=len(candidates),
                 )
-
-                frame = source.read(
-                    target.frame_id,
-                    target.timestamp_sec
-                )
-
-                if frame is None:
-                    raise PlacementError(
-                        f"Could not read frame {target.frame_id} "
-                        f"(t={target.timestamp_sec})."
-                    )
 
                 # 2-4. Geometry -> lighting -> blending
                 prepared, dest_size = prepare_ad(
@@ -248,12 +264,10 @@ class AdPlacerAgent:
                     lighting
                 )
 
-                composite_img, info = composite(
+                composite_img, info = self._composite_still(
                     frame,
                     prepared,
                     target.quad,
-                    self.cfg.blend_mode,
-                    self.cfg
                 )
 
                 metrics.update(
@@ -302,7 +316,8 @@ class AdPlacerAgent:
                             source,
                             target,
                             prepared,
-                            agent1
+                            agent1,
+                            ad_image_path,
                         )
                     )
 
@@ -350,6 +365,23 @@ class AdPlacerAgent:
                 frame_id,
                 metrics
             )
+    # ------------------------------------------------------------------ #
+    # Key-frame (still) compositing: feathered alpha / Poisson / hybrid as configured
+    # ------------------------------------------------------------------ #
+    def _composite_still(
+        self, frame: np.ndarray, prepared: PreparedAd, quad: np.ndarray
+    ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        warped, warped_alpha, matrix = warp_ad(prepared, quad, frame.shape)
+        sigma, erode_px = feather_params(quad, self.cfg)
+        core, soft = build_masks(quad, frame.shape, sigma, erode_px)
+        out, used_mode, note = blend(
+            frame, warped, soft * warped_alpha, core, self.cfg.blend_mode, self.cfg
+        )
+        blending: Dict[str, Any] = {"mode": used_mode, "requested_mode": self.cfg.blend_mode, "status": "placed"}
+        if note:
+            blending["note"] = note
+        return out, {"transformation_matrix": matrix.tolist(), "blending": blending}
+
     # ------------------------------------------------------------------ #
     # Loading
     # ------------------------------------------------------------------ #
@@ -582,95 +614,72 @@ class AdPlacerAgent:
     # 5. Optional video rendering (tracking.py finds the quads, blending.py draws them)
     # ------------------------------------------------------------------ #
     def _safe_render_video(
-        self, source: FrameSource, target: SurfaceCandidate, prepared: PreparedAd, agent1: Dict[str, Any]
+        self,
+        source: FrameSource,
+        target: SurfaceCandidate,
+        prepared: PreparedAd,
+        agent1: Dict[str, Any],
+        ad_image_path: Union[str, Path],
     ) -> Tuple[Optional[str], Dict[str, Any]]:
         if not source.is_video:
             return None, {"rendered": False, "error": "background is a still image, not a video"}
         try:
-            return self.render_video(source, target, prepared, agent1)
+            return self.render_video(source, target, prepared, agent1, ad_image_path)
         except Exception as exc:
             logger.exception("Video rendering failed")
             return None, {"rendered": False, "error": f"{type(exc).__name__}: {exc}"}
 
     def render_video(
-        self, 
-        source: FrameSource, 
-        target: SurfaceCandidate, 
+        self,
+        source: FrameSource,
+        target: SurfaceCandidate,
         prepared: PreparedAd,
-        agent1_data: Dict[str, Any]
+        agent1_data: Dict[str, Any],
+        ad_image_path: Union[str, Path],
     ) -> Tuple[str, Dict[str, Any]]:
-        """Track the surface and render the ad dynamically with smooth tracking."""
-        
-        # 1. التتبع بواسطة Optical Flow
-        tracked_quads = track_surface(
-            source,
-            key_idx=target.frame_id,
-            key_quad=target.quad,
-            first_seen_frame=target.first_seen_frame,
-            max_frames=self.cfg.video_max_frames,
-            
-        )
+        """
+        Track the surface through the whole video and render the ad onto it.
 
-        # 2. استخراج واستكمال المسار من Agent 1
-        traj_quads = {}
-        for surf in agent1_data.get("detected_surfaces") or []:
-            if surf.get("object_id") == target.object_id and "trajectory" in surf:
-                traj_quads = self._interpolate_trajectory(surf["trajectory"], source.width, source.height)
-                break
-
-        # دمج التتبع: الأولوية لـ Optical Flow ثم Trajectory لملء الفجوات
-        all_quads = {**traj_quads, **tracked_quads}
-
+        Delegates to :func:`place_ad_in_video` (anchored perspective tracking, state machine, Kalman +
+        RTS smoothing, occlusion, AA compositing). ``target.quad`` is the anchor quad. ``prepared`` and
+        ``agent1_data`` are kept in the signature for compatibility; the ad is re-prepared from
+        ``ad_image_path`` and Agent 1's sparse trajectory is no longer interpolated into the result
+        (it was a source of jumps; the tracker re-acquires the surface by itself).
+        """
         out_path = Path(self.cfg.output_video_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        writer = cv2.VideoWriter(
-            str(out_path),
-            cv2.VideoWriter_fourcc(*self.cfg.video_fourcc),
-            source.fps or 25.0,
-            (source.width, source.height),
+
+        # Agent 1's per-frame polygons of the same object: used to start a new anchor in every shot
+        # (edited videos contain cuts that no tracker can follow).
+        candidates: List[Dict[str, Any]] = []
+        for surf in agent1_data.get("detected_surfaces") or []:
+            if surf.get("object_id") != target.object_id:
+                continue
+            for t in surf.get("trajectory") or []:
+                if t.get("polygon") is not None and t.get("frame_id") is not None:
+                    candidates.append({
+                        "frame_id": int(t["frame_id"]),
+                        "polygon": t["polygon"],
+                        "confidence": float(t.get("confidence", 0.0)),
+                    })
+
+        metrics = place_ad_in_video(
+            video_path=source.source_path,
+            ad_path=str(ad_image_path),
+            output_path=str(out_path),
+            anchor_frame_idx=target.frame_id,
+            manual_quad=target.quad,
+            surface_type=target.surface_type,
+            cfg=self.cfg,
+            anchor_candidates=candidates,
         )
-
-        if not writer.isOpened():
-            raise PlacementError(f"VideoWriter could not open {out_path}.")
-
-        written = 0
-        prev_quad: Optional[np.ndarray] = None
-        alpha = 0.65  # معامل التنعيم (EMA) لتثبيت الزوم ومنع الاهتزاز
-
-        try:
-            idx = 0
-            while True:
-                frame = source.read(idx)
-                if frame is None:
-                    break
-
-                quad = all_quads.get(idx)
-                if quad is not None:
-                    # ضبط ترتيب الأركان
-                    ordered_q = self._order_quad(quad)
-
-                    # تطبيق التنعيم (EMA) لتتبع سلس مع حركة الكاميرا والـ Zoom
-                    if prev_quad is not None:
-                        smoothed_q = alpha * ordered_q + (1.0 - alpha) * prev_quad
-                    else:
-                        smoothed_q = ordered_q
-
-                    prev_quad = smoothed_q
-                    frame, _ = composite(frame, prepared, smoothed_q, "alpha", self.cfg)
-                else:
-                    prev_quad = None  # إعادة تعيين التنعيم في حال اختفاء الشاشة
-
-                writer.write(frame)
-                written += 1
-                idx += 1
-        finally:
-            writer.release()
-
-        return str(out_path), {
+        info: Dict[str, Any] = {
             "rendered": True,
-            "frames_written": written,
-            "tracked_frames": len(all_quads),
+            "frames_written": metrics["frames_written"],
+            "tracked_frames": metrics["tracking"].get("tracked_frames", 0),
+            "frames_covered": metrics.get("frames_covered", 0),
         }
+        info.update(metrics)
+        return str(out_path), info
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -704,7 +713,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--agent2", default="data/agent2_output.json")
     parser.add_argument("--out-image", default="data/ad_placement_output.jpg")
     parser.add_argument("--out-video", default="data/ad_placement_output.mp4")
-    parser.add_argument("--blend-mode", default="hybrid", choices=VALID_BLEND_MODES)
+    parser.add_argument("--blend-mode", default="alpha", choices=VALID_BLEND_MODES)
     parser.add_argument("--render-video", action="store_true")
     args = parser.parse_args(argv)
 

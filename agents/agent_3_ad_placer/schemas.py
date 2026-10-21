@@ -94,10 +94,34 @@ class AdPlacerConfig:
     video_max_frames: Optional[int] = None
     video_fourcc: str = "mp4v"
 
-    # Tracker Settings
-    track_min_inliers: int = 12
-    track_max_scale_change: float = 1.8
-    track_band_margin: int = 25
+    # Tracker settings (planar, anchored tracker -- see tracking.py)
+    track_work_width: int = 640            # tracker works on frames downscaled to this width
+    track_min_inliers: int = 12            # min RANSAC inliers for a frame to count as measured
+    track_max_scale_change: float = 1.8    # max frame-to-frame quad area ratio (and its inverse)
+    track_band_margin: int = 25            # width (working-scale px) of the on-surface edge band used for features
+    track_ring_ratio: float = 0.5          # feature ring extends this fraction of min(w,h) outside the quad
+    track_max_features: int = 250
+    track_cov_homography: float = 0.15     # min point-coverage (hull / quad area) to trust a full homography
+    track_cov_affine: float = 0.05         # below this only a similarity transform is fitted
+    track_edge_refine: bool = True         # snap the quad sides to the surface's real edges each frame
+    track_fb_error_px: float = 1.5         # forward-backward LK rejection threshold
+    track_ransac_px: float = 3.0
+    track_acquire_min_inliers: int = 22    # stricter inlier requirement for (re-)acquiring the surface
+    track_reanchor_interval: int = 20      # AKAZE re-registration against the anchor every N frames
+    track_reacquire_interval: int = 5      # while LOST, try to re-acquire every N frames
+    track_max_coast_frames: int = 8        # DEGRADED frames tolerated before the surface is declared LOST
+    track_min_visible_ratio: float = 0.15  # fraction of quad area inside the frame required to draw the ad
+    track_reacquire_confirm: int = 3       # consecutive good frames before the ad fades back in
+    track_max_interp_gap: int = 12         # fill gaps between reliable frames up to this length
+    track_jump_tolerance: float = 0.35     # max corner jump vs. prediction, as a fraction of quad size
+
+    # Temporal smoothing (constant-velocity Kalman + RTS backward pass)
+    smooth_process_noise: float = 4.0      # working-scale px^2, acceleration noise
+    smooth_measurement_noise: float = 1.0  # working-scale px^2 at confidence 1
+    smooth_speed_ref: float = 3.0          # corner speed (px/frame) at which the smoothing noise doubles (adaptive)
+
+    # Appearance in time
+    fade_frames: int = 6                   # opacity ramp when the ad appears / disappears
 
     # Surface selection
     min_confidence: float = 0.30
@@ -115,7 +139,38 @@ class AdPlacerConfig:
     max_brightness_shift: float = 25.0
     max_chroma_shift: float = 20.0
 
+    # Surface geometry refinement
+    snap_anchor_to_edges: bool = True      # re-fit the anchor quad to the real display edges (see edge_refine.py)
+    anchor_bezel_ratio: float = 0.018      # thin-bezel allowance (x smaller side) on sharp, strong wall edges only
+    screen_inset_ratio: float = 0.0        # per-frame draw inset in the plane (fraction of size); <0 = overscan
+    anchor_bezel_inset: float = 0.012      # applied once to YOLO object quads of emissive types (bezel -> screen)
+
+    # Multi-shot handling (edited videos with cuts)
+    multi_anchor: bool = True              # start a new tracking anchor in each shot where the first one cannot reach
+    max_extra_anchors: int = 8
+    surface_aspect: Optional[float] = None # true width/height of the surface (None = 16:9 for screens, else estimated)
+    ad_max_render_long_side: int = 1280    # resolution the ad is prepared at (a mip pyramid is built from it)
+
+    # Screen realism
+    reflection_strength: float = 0.5       # 0 disables; glass reflections added to the ad (kept subtle)
+    reflection_cap: float = 38.0           # max brightness (0-255) the reflection may add
+    reflection_dark_threshold: float = 95.0  # reflections are only taken from screen pixels darker than this
+    reflection_blur_ratio: float = 0.03    # low-pass sigma as a fraction of the screen's smaller side
+    emissive_match_luminance: bool = False # False: never darken / flatten the ad towards the dark wall for screens
+
+    # Backward fill (ad from the first reliably verified frame)
+    track_backfill: bool = True
+    track_backfill_max: int = 90           # max frames tracked backwards from a verified frame
+    track_backfill_min_conf: float = 0.4
+
+    # Realism
+    use_occlusion: bool = False            # opt-in: only reliable for static surfaces (switched-off TV, wall); verify on your footage
+    occlusion_threshold: float = 0.25      # normalised plane-space difference regarded as foreground
+    occlusion_max_fraction: float = 0.55   # above this the difference is a content change, not an occluder
+    motion_blur_shutter: float = 0.5       # fraction of frame time the shutter is open (0 disables)
+    max_motion_blur_px: float = 24.0
+
     # Blending
-    blend_mode: str = "hybrid"
+    blend_mode: str = "alpha"   # tight tracked quad: Poisson ("hybrid") bleeds the dark bezel into the ad edges
     feather_ratio: float = 0.02
     clone_edge_band_ratio: float = 0.10

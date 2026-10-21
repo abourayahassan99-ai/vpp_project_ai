@@ -2,38 +2,64 @@
   "frame_descriptions": [
     {
       "frame_number": 0,
-      "caption": "a white wall"
+      "caption": "a small room with a desk and a television"
     },
     {
-      "frame_number": 206,
-      "caption": "a tv sitting on top of a table"
-    },
-    {
-      "frame_number": 413,
-      "caption": "a tv sitting on top of a table"
-    },
-    {
-      "frame_number": 620,
+      "frame_number": 66,
       "caption": "a flat screen tv mounted on a wall"
+    },
+    {
+      "frame_number": 132,
+      "caption": "a tv mounted on the wall"
+    },
+    {
+      "frame_number": 198,
+      "caption": "a tv mounted on the wall"
+    },
+    {
+      "frame_number": 265,
+      "caption": "a flat screen tv mounted on a wall"
+    },
+    {
+      "frame_number": 331,
+      "caption": "a flat screen tv mounted on a wall"
+    },
+    {
+      "frame_number": 397,
+      "caption": "a small desk with a laptop on it"
+    },
+    {
+      "frame_number": 464,
+      "caption": "a room with a television and a table"
     }
   ],
   "scene_analysis": {
     "Scene Type": "Living Room",
     "Main Objects": [
-      "TV",
-      "Wall"
+      "flat screen TV",
+      "desk",
+      "television"
     ],
     "Persistent Objects": [
-      "TV"
+      "wall-mounted TV"
     ],
     "Visible Surfaces": [
-      "White Wall",
-      "Flat Screen TV Mounting Surface"
+      "wall",
+      "desk surface",
+      "television screen"
     ],
     "Spatial Relationships": [
-      "TV is placed on top of a table",
-      "TV is mounted on a wall"
+      {
+        "Subject": "small room",
+        "Object": "flat screen TV",
+        "Relationship": "in the room"
+      },
+      {
+        "Subject": "room",
+        "Object": "table",
+        "Relationship": "contains"
+      }
     ],
-    "Scene Context": "A living room with a television set mounted on a wall."
+    "Scene Context": "A living room setting with a flat screen TV, a desk, and a television."
   }
 }

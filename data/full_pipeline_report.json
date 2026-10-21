@@ -1,0 +1,159 @@
+{
+  "selected_surface_id": 1,
+  "selected_frame_id": 95,
+  "blending_status": {
+    "success": true,
+    "message": "Ad placed successfully."
+  },
+  "output_image_path": "data\\ad_placement_output.jpg",
+  "output_video_path": "data\\ad_placement_output.mp4",
+  "placement_metrics": {
+    "surface_type": "tv",
+    "detection_confidence": 0.8738,
+    "selection_score": 0.9157,
+    "score_breakdown": {
+      "confidence": 0.4806,
+      "scene_compatibility": 0.25,
+      "area": 0.1,
+      "sharpness": 0.0852
+    },
+    "polygon_fit_method": "approx_poly_dp+lines+edge_snap",
+    "target_corners": [
+      [
+        52.9900016784668,
+        199.17999267578125
+      ],
+      [
+        397.42999267578125,
+        219.35000610351562
+      ],
+      [
+        400.4599914550781,
+        405.7200012207031
+      ],
+      [
+        52.70000076293945,
+        403.2200012207031
+      ]
+    ],
+    "anchor_warnings": [],
+    "num_candidates": 2,
+    "transformation_matrix": [
+      [
+        1.1078291207401056,
+        -0.004323061307674572,
+        52.9913215637207
+      ],
+      [
+        0.11890230486771879,
+        1.030221757027546,
+        199.17575073242188
+      ],
+      [
+        0.00027541309962225116,
+        -5.349246647149502e-05,
+        1.0
+      ]
+    ],
+    "ad_fit_mode": "cover",
+    "ad_prepared_size": [
+      346,
+      195
+    ],
+    "lighting_adjustment": {
+      "strength": 0.3,
+      "reference": "surrounding_ring",
+      "src_mean_L": 29.3496,
+      "brightness_shift": 0.0,
+      "contrast_gain": 1.0,
+      "a_shift": -3.818,
+      "b_shift": -6.8526,
+      "target_mean_L": 40.2928,
+      "target_std_L": 21.9862
+    },
+    "blending": {
+      "mode": "alpha",
+      "requested_mode": "alpha",
+      "status": "placed"
+    },
+    "video": {
+      "rendered": true,
+      "frames_written": 465,
+      "tracked_frames": 465,
+      "frames_covered": 465,
+      "anchor_frame": 95,
+      "anchor_method": "manual",
+      "anchor_quad": [
+        [
+          53.0,
+          199.1999969482422
+        ],
+        [
+          397.3999938964844,
+          219.39999389648438
+        ],
+        [
+          400.5,
+          405.70001220703125
+        ],
+        [
+          52.70000076293945,
+          403.20001220703125
+        ]
+      ],
+      "anchor_warnings": [],
+      "frames_with_ad": 465,
+      "frames_with_occlusion": 0,
+      "occlusion": "disabled by config",
+      "surface_aspect": 1.778,
+      "ad_levels": [
+        554,
+        277,
+        138
+      ],
+      "shots": [
+        [
+          0,
+          464
+        ]
+      ],
+      "anchors": [
+        {
+          "id": 0,
+          "frame": 95,
+          "occlusion": "disabled by config"
+        }
+      ],
+      "extra_anchor_runs": [],
+      "lighting": {
+        "strength": 0.3,
+        "reference": "surrounding_ring",
+        "src_mean_L": 29.4015,
+        "brightness_shift": 0.0,
+        "contrast_gain": 1.0,
+        "a_shift": -3.818,
+        "b_shift": -6.8531,
+        "target_mean_L": 40.2928,
+        "target_std_L": 21.9862
+      },
+      "tracking": {
+        "reacquire_attempts": 1,
+        "reacquire_success": 1,
+        "edge_sides_corrected": 1852,
+        "reanchor_accepted": 24,
+        "tracked_frames": 465,
+        "visible_frames": 465,
+        "interpolated_frames": 0,
+        "segments": 1,
+        "mean_confidence": 0.915,
+        "processing_seconds": 52.53,
+        "processing_fps": 8.9,
+        "work_scale": 1.0
+      },
+      "output_video_path": "data\\ad_placement_output.mp4",
+      "h264": false,
+      "encoder": "mpeg4 (no ffmpeg found - install ffmpeg or imageio-ffmpeg)",
+      "total_seconds": 75.03
+    }
+  }
+}

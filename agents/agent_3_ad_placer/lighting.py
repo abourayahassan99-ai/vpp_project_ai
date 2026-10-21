@@ -79,6 +79,10 @@ def estimate_lighting(
     lo, hi = cfg.contrast_gain_range
     contrast = float(np.clip(1.0 + strength * (t_std / max(s_std, 1e-3) - 1.0), lo, hi))
     shift = float(np.clip(strength * (t_mean - s_mean), -cfg.max_brightness_shift, cfg.max_brightness_shift))
+    if emissive and not cfg.emissive_match_luminance:
+        # A screen emits its own light: matching the ad's luminance / contrast to the (dark) surroundings would
+        # only dull it. Keep the ad's tone; only the (weak) chroma adaptation below remains.
+        contrast, shift = 1.0, 0.0
     cmax = cfg.max_chroma_shift
     return LightingParams(
         strength=strength,
