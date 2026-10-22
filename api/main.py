@@ -19,6 +19,7 @@ app = FastAPI(
     description="Virtual Product Placement AI API",
     version="1.0.0"
 )
+agent2_instance = None
 
 
 # ============================================================
@@ -95,11 +96,15 @@ async def process_video(
     # 5. Run Agent 2
     # --------------------------------------------------------
 
-    agent2 = ContextAnalyzerAgent()
+    global agent2_instance
 
-    agent2_result = agent2.analyze_video(
+    if agent2_instance is None:
+        print("Initializing Agent 2 for the first time...")
+        agent2_instance = ContextAnalyzerAgent()
+
+    agent2_result = agent2_instance.analyze_video(
         str(video_path)
-    )
+)
      # --------------------------------------------------------
     # 6. Save Agent 1 and Agent 2 outputs
     # --------------------------------------------------------

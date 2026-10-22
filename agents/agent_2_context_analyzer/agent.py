@@ -138,8 +138,9 @@ Rules:
             generated_ids = (
                 self.aggregator_model.generate(
                     **model_inputs,
-                    max_new_tokens=300,
+                    max_new_tokens=150,
                     do_sample=False,
+                    use_cache=True,
                 )
             )
 
