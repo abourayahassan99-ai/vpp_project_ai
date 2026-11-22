@@ -284,7 +284,10 @@ def place_ad_in_video(
                 if fr is None:
                     continue
                 try:
-                    q, _, _ = build_anchor_quad(fr, best["polygon"], None, surface_type, cfg)
+                    q, _, _ = build_anchor_quad(
+                        fr, best["polygon"], None, surface_type, cfg,
+                        exact_active_area=bool(best.get("exact_active_area", False)),
+                    )
                 except PlacementError as exc:
                     logger.info("shot %d-%d: candidate %d rejected (%s)", s0, s1, fidx, exc)
                     continue

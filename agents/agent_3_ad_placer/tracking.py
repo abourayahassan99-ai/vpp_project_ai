@@ -165,7 +165,11 @@ class PlanarSurfaceTracker:
         r_out = int(max(6, c.track_ring_ratio * m))
         outer = cv2.dilate(poly, cv2.getStructuringElement(cv2.MORPH_RECT, (2 * r_out + 1, 2 * r_out + 1)))
         if self._exclude_interior or c.track_band_margin <= 0:
-            inner = poly  # screen shows moving video: never track its interior
+            # A live screen's center changes every frame, but its bezel remains fixed to the
+            # plane. Keep a narrow inner edge band plus a close outer ring; tracking only the
+            # broad outside ring follows background at a different depth and causes parallax drift.
+            r_in = int(np.clip(c.track_band_margin, 2, 0.2 * m))
+            inner = cv2.erode(poly, cv2.getStructuringElement(cv2.MORPH_RECT, (2 * r_in + 1, 2 * r_in + 1)))
         else:
             # static surface (dark switched-off TV, wall, poster): its edge band holds the strongest
             # corners (TV corners!) and keeps the model well conditioned on all four sides

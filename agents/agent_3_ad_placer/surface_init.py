@@ -25,6 +25,7 @@ def build_anchor_quad(
     manual_quad: Any = None,
     surface_type: str = "",
     cfg: Optional[AdPlacerConfig] = None,
+    exact_active_area: bool = False,
 ) -> Tuple[np.ndarray, str, List[str]]:
     """
     Returns (quad TL,TR,BR,BL float32, method, warnings).
@@ -47,7 +48,7 @@ def build_anchor_quad(
         if not polygon_is_valid(pts):
             raise PlacementError("Surface polygon is missing or degenerate; supply manual_quad instead.")
         quad, method = fit_quad(pts)
-        if surface_type in cfg.emissive_surface_types:
+        if surface_type in cfg.emissive_surface_types and not exact_active_area:
             snapped, info = (snap_quad_to_display(frame, quad, cfg.anchor_bezel_ratio)
                              if cfg.snap_anchor_to_edges else (None, {"reason": "disabled"}))
             if snapped is not None:

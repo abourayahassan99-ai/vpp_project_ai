@@ -3,14 +3,13 @@ Edge detection for planar display surfaces (Agent 3).
 
 Two jobs, one detector
 ----------------------
-1. ``snap_quad_to_display``  (once, at the anchor frame): Agent 1's segmentation polygon is loose (10-12 px
-   outside the TV in the supplied footage). The 4 sides are re-fitted to the real image edges of the *active
-   display area*.
+1. ``snap_quad_to_display`` (once, at the anchor frame): Agent 1's segmentation polygon is loose. The 4 sides
+   are re-fitted to the real image edges of the *active display area* when the screen/wall contrast supports it.
 2. ``EdgeRefiner``  (every frame): keeps each tracked side on the same physical edge, using the position the
    edge had relative to the quad in the anchor frame.
 
-The detector looks, along the outward normal of every side, for the INNERMOST significant dark -> brighter
-step when scanning outwards from the glass. Two kinds of step occur on a dark (switched-off) TV:
+The detector looks, along the outward normal of every side, for the INNERMOST significant brightness step,
+in either direction, when scanning outwards from the glass. On a dark (switched-off) TV:
 
   * outer step : glass/bezel -> bright wall. The bezel itself is a thin black rim that is not separable from
                  the glass, so a small bezel allowance (``bezel_ratio`` x the surface's smaller side) is applied.
@@ -18,7 +17,8 @@ step when scanning outwards from the glass. Two kinds of step occur on a dark (s
                  active-area boundary, so only ~1 px is applied.
 
 The kind is decided from the brightness *outside* the step relative to the wall, not from a fixed per-side rule.
-Sides whose edge cannot be supported (cables, shadows) are inferred from the supported sides.
+Bright active screens use the reverse (bright -> dark) edge polarity. Sides whose edge cannot be supported
+(cables, shadows) are inferred from the supported sides.
 """
 
 from __future__ import annotations
@@ -58,7 +58,8 @@ def _profiles(gray: np.ndarray, pts: np.ndarray, normal: np.ndarray, radius: int
     return cv2.remap(gray, xs, ys, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
-def _first_steps(prof: np.ndarray, wall_ref: float, dark_frac: float = 0.55):
+def _first_steps(prof: np.ndarray, wall_ref: float, dark_frac: float = 0.55,
+                bright_surface: bool = False):
     """
     Innermost significant dark->brighter step for every profile row.
     Returns arrays (pos, step, outside_mean, rise): ``pos`` is the mid-ramp position (sub-pixel index) or NaN;
@@ -69,9 +70,14 @@ def _first_steps(prof: np.ndarray, wall_ref: float, dark_frac: float = 0.55):
     k = np.arange(3, M - 3)
     inside = (cs[:, k] - cs[:, k - 3]) / 3.0            # mean of prof[k-3 .. k-1]
     outside = (cs[:, k + 4] - cs[:, k + 1]) / 3.0       # mean of prof[k+1 .. k+3]
-    step = outside - inside
+    # The active display may be either darker or brighter than the wall. Scan for
+    # the corresponding signed edge instead of assuming every screen is dark.
+    step = inside - outside if bright_surface else outside - inside
     min_step = max(5.0, 0.07 * wall_ref)
-    cand = (step >= min_step) & (inside <= dark_frac * wall_ref)
+    if bright_surface:
+        cand = (step >= min_step) & (inside >= (2.0 - dark_frac) * wall_ref)
+    else:
+        cand = (step >= min_step) & (inside <= dark_frac * wall_ref)
     pos = np.full(K, np.nan)
     rise = np.full(K, np.nan)
     st = np.zeros(K)
@@ -93,15 +99,23 @@ def _first_steps(prof: np.ndarray, wall_ref: float, dark_frac: float = 0.55):
         out[r] = outside[r, j]
         lo = max(0, kk - 10)
         plateau = float(np.median(prof[r, lo:max(lo + 1, kk - 5)]))
-        thr = plateau + max(2.5, 0.06 * (outside[r, j] - plateau))
+        delta = max(2.5, 0.06 * abs(outside[r, j] - plateau))
+        thr = plateau - delta if bright_surface else plateau + delta
         m = kk
-        while m > 0 and prof[r, m] > thr:
-            m -= 1
-        if m < kk and prof[r, m + 1] > prof[r, m]:
-            frac = (thr - prof[r, m]) / max(prof[r, m + 1] - prof[r, m], 1e-6)
-            rise[r] = m + float(np.clip(frac, 0, 1))
+        if bright_surface:
+            while m > 0 and prof[r, m] < thr:
+                m -= 1
+            if m < kk and prof[r, m + 1] < prof[r, m]:
+                frac = (thr - prof[r, m]) / min(prof[r, m + 1] - prof[r, m], -1e-6)
+                rise[r] = m + float(np.clip(frac, 0, 1))
         else:
-            rise[r] = float(m)
+            while m > 0 and prof[r, m] > thr:
+                m -= 1
+            if m < kk and prof[r, m + 1] > prof[r, m]:
+                frac = (thr - prof[r, m]) / max(prof[r, m + 1] - prof[r, m], 1e-6)
+                rise[r] = m + float(np.clip(frac, 0, 1))
+            else:
+                rise[r] = float(m)
     return pos, st, out, rise
 
 
@@ -172,7 +186,8 @@ def _wall_for(side_walls, i, fallback):
     return float(side_walls[i]) if np.isfinite(side_walls[i]) else float(fallback)
 
 
-def detect_side(gray, quad, i, normals, radius, wall_ref, bezel_px: float = 0.0, dark_frac: float = 0.55):
+def detect_side(gray, quad, i, normals, radius, wall_ref, bezel_px: float = 0.0,
+                dark_frac: float = 0.55, bright_surface: bool = False):
     """
     Active-display boundary of side ``i`` near ``quad``. Returns dict(offsets, base, steps, outside, strong) or None.
     ``offsets`` are signed distances (px) along the outward normal from the quad side to the boundary:
@@ -183,7 +198,7 @@ def detect_side(gray, quad, i, normals, radius, wall_ref, bezel_px: float = 0.0,
     if len(p) < 10:
         return None
     pr = _profiles(gray, p, normals[i], radius)
-    pos, st, out, rise = _first_steps(pr, wall_ref, dark_frac)
+    pos, st, out, rise = _first_steps(pr, wall_ref, dark_frac, bright_surface)
     ok = ~np.isnan(pos)
     if ok.sum() < 10:
         return None
@@ -228,8 +243,9 @@ def snap_quad_to_display(
     mask = np.zeros((h, w), np.uint8)
     cv2.fillConvexPoly(mask, np.round(q0).astype(np.int32), 255)
     inner = float(np.median(gray[mask > 0]))
-    if inner > 0.6 * wall_ref or wall_ref < 40:
-        info["reason"] = f"screen is not darker than its surroundings (inside {inner:.0f}, wall {wall_ref:.0f})"
+    bright_surface = inner > wall_ref
+    if abs(inner - wall_ref) < max(6.0, 0.12 * max(inner, wall_ref)):
+        info["reason"] = f"screen edge contrast is too weak (inside {inner:.0f}, wall {wall_ref:.0f})"
         return None, info
 
     bezel = bezel_ratio * size
@@ -237,7 +253,8 @@ def snap_quad_to_display(
     lines = [None] * 4
     kinds = [""] * 4
     for i in range(4):
-        d = detect_side(gray, q0, i, normals, radius, _wall_for(side_walls, i, wall_ref), bezel)
+        d = detect_side(gray, q0, i, normals, radius, _wall_for(side_walls, i, wall_ref), bezel,
+                        bright_surface=bright_surface)
         if d is None:
             continue
         kinds[i] = "wall-edge" if d["strong"] else "soft-edge"
@@ -314,6 +331,7 @@ class EdgeRefiner:
         self.offset: List[float] = [0.0] * 4
         self.strength: List[float] = [0.0] * 4
         self.valid: List[bool] = [False] * 4
+        self.bright_surface = False
         g = cv2.GaussianBlur(anchor_gray, (0, 0), 1.0).astype(np.float32)
         self.enabled = False
         qw, qh = quad_dimensions(self.a_quad)
@@ -326,11 +344,13 @@ class EdgeRefiner:
         side_walls = _side_walls(g, self.a_quad, normals, radius)
         m = np.zeros(g.shape, np.uint8)
         cv2.fillConvexPoly(m, np.round(self.a_quad).astype(np.int32), 255)
-        if float(np.median(g[m > 0])) > 0.6 * wall or wall < 40:
-            return                                   # not a dark display: nothing to calibrate against
+        inner = float(np.median(g[m > 0]))
+        if abs(inner - wall) < max(6.0, 0.12 * max(inner, wall)):
+            return                                   # insufficient contrast to calibrate the edge
+        self.bright_surface = inner > wall
         for i in range(4):
             d = detect_side(g, self.a_quad, i, normals, radius, _wall_for(side_walls, i, wall),
-                            self.bezel_ratio * min(qw, qh))
+                            self.bezel_ratio * min(qw, qh), bright_surface=self.bright_surface)
             if d is None:
                 continue
             fit = _fit_line(d["base"] + normals[i][None, :] * d["offsets"][:, None], tol=2.2)
@@ -371,7 +391,8 @@ class EdgeRefiner:
             dvec = (b - a) / (np.linalg.norm(b - a) + 1e-9)
             line = np.array([dvec[0], dvec[1], a[0], a[1]], np.float32)
             if self.valid[i] and sizes[i] > 12:
-                d = detect_side(g, quad, i, normals, radius, _wall_for(side_walls, i, wall), bezel_px, dark_frac=0.85)
+                d = detect_side(g, quad, i, normals, radius, _wall_for(side_walls, i, wall), bezel_px,
+                                dark_frac=0.85, bright_surface=self.bright_surface)
                 if d is not None and float(np.median(d["steps"])) >= 0.4 * self.strength[i]:
                     scale = sizes[i] / max(a_sizes[i], 1e-6)
                     s = d["offsets"] - self.offset[i] * scale

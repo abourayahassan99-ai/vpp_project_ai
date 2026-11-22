@@ -51,6 +51,7 @@ class SurfaceCandidate(BaseModel):
     quad: np.ndarray  # (4, 2) float32, ordered TL, TR, BR, BL
     fit_method: str
     area_ratio: float
+    exact_active_area: bool = False
     score: float = 0.0
     score_breakdown: Dict[str, float] = Field(default_factory=dict)
 
@@ -99,7 +100,7 @@ class AdPlacerConfig:
     track_min_inliers: int = 12            # min RANSAC inliers for a frame to count as measured
     track_max_scale_change: float = 1.8    # max frame-to-frame quad area ratio (and its inverse)
     track_band_margin: int = 25            # width (working-scale px) of the on-surface edge band used for features
-    track_ring_ratio: float = 0.5          # feature ring extends this fraction of min(w,h) outside the quad
+    track_ring_ratio: float = 0.12         # keep tracking features close to the surface to limit parallax drift
     track_max_features: int = 250
     track_cov_homography: float = 0.15     # min point-coverage (hull / quad area) to trust a full homography
     track_cov_affine: float = 0.05         # below this only a similarity transform is fitted

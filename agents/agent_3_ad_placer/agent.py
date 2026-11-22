@@ -99,6 +99,15 @@ SURFACE_SYNONYMS: Dict[str, Tuple[str, ...]] = {
     "billboard": ("billboard", "hoarding", "signboard"),
 }
 
+# Agent 1 is a general object detector. Only these approximately planar objects
+# should be considered placement targets; people, plants, bowls, and furniture
+# remain detections but are not ad-placement recommendations.
+PLACEMENT_SURFACE_TYPES = frozenset({
+    "tv", "television", "monitor", "screen", "display", "laptop", "tablet",
+    "cell phone", "phone", "billboard", "poster", "signboard", "wall",
+    "picture", "frame", "book", "door", "window",
+})
+
 
 # --------------------------------------------------------------------------- #
 # The agent
@@ -127,6 +136,7 @@ class AdPlacerAgent:
         user_prompt: Optional[str] = None,
         agent1_output_path: Optional[Union[str, Path]] = None,
         agent2_output_path: Optional[Union[str, Path]] = None,
+        selected_surface_id: Optional[Union[int, str]] = None,
     ) -> Agent3Output:
         """
         Place the ad on the best surface.
@@ -188,8 +198,19 @@ class AdPlacerAgent:
                     scene_sections,
                     source.width,
                     source.height,
-                    user_prompt=user_prompt
+                    # Explicit recommendation selection is authoritative; free-text
+                    # preferences must not filter out the user's chosen surface.
+                    user_prompt=None if selected_surface_id is not None else user_prompt
                 )
+
+                # A recommendation flow can lock placement to a candidate that was
+                # returned earlier for this same job. Keep the existing ranking and
+                # rendering pipeline, but do not silently switch to another surface.
+                if selected_surface_id is not None:
+                    candidates = [
+                        candidate for candidate in candidates
+                        if str(candidate.object_id) == str(selected_surface_id)
+                    ]
 
                 if not candidates:
                     raise PlacementError(
@@ -219,6 +240,7 @@ class AdPlacerAgent:
                     polygon_points=target.polygon,
                     surface_type=target.surface_type,
                     cfg=self.cfg,
+                    exact_active_area=target.exact_active_area,
                 )
                 target.quad = anchor_quad
                 target.fit_method = anchor_method
@@ -539,6 +561,8 @@ class AdPlacerAgent:
             object_id = surf.get("object_id", idx)
             confidence = self._to_float(roi.get("confidence", surf.get("confidence")), 0.0)
             surface_type = str(roi.get("surface_type", "unknown")).strip().lower()
+            if surface_type not in PLACEMENT_SURFACE_TYPES:
+                continue
             if requested_types:
                   matches_requested = any(
                     surface_type == requested
@@ -578,6 +602,7 @@ class AdPlacerAgent:
                 quad=quad,
                 fit_method=method,
                 area_ratio=area_ratio,
+                exact_active_area=bool(roi.get("exact_active_area", False)),
             )
             self._score(cand, scene_text, persistent_text)
             candidates.append(cand)
@@ -660,6 +685,7 @@ class AdPlacerAgent:
                         "frame_id": int(t["frame_id"]),
                         "polygon": t["polygon"],
                         "confidence": float(t.get("confidence", 0.0)),
+                        "exact_active_area": target.exact_active_area,
                     })
 
         metrics = place_ad_in_video(
