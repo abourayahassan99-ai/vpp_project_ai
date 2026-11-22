@@ -2,3 +2,17 @@
 *.mp4
 *.pt
 data/*.jpg
+
+# Python-generated files and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Runtime artifacts created by the FastAPI service
+/api/jobs/
+/api/uploads/
+/api/outputs/
+
+# Local research notes; keep these out of the code repository
+/docs/research_progress_report_*.md
